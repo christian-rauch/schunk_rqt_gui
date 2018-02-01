@@ -8,6 +8,8 @@ import rospkg
 from qt_gui.plugin import Plugin
 from python_qt_binding import loadUi
 from python_qt_binding.QtWidgets import QWidget
+from python_qt_binding.QtGui import QImage, QPixmap, QTransform
+from python_qt_binding.QtCore import pyqtSignal
 
 # action library
 import actionlib
@@ -16,14 +18,17 @@ import actionlib
 from std_srvs.srv import Trigger
 from control_msgs.msg import FollowJointTrajectoryAction, FollowJointTrajectoryGoal, FollowJointTrajectoryResult
 from trajectory_msgs.msg import JointTrajectoryPoint
-from schunk_sdh.msg import TemperatureArray
+from schunk_sdh.msg import TemperatureArray, PressureArrayList
 
 import math
 import threading
 import time
+import numpy as np
 
 
 class SchunkPlugin(Plugin):
+    update_pressure_image = pyqtSignal(str, np.ndarray)
+
     def __init__(self, context):
         super(SchunkPlugin, self).__init__(context)
         # Give QObjects reasonable names
@@ -65,6 +70,14 @@ class SchunkPlugin(Plugin):
 
         # subscribers
         self.sub_temp = rospy.Subscriber("/gripper/sdh_controller/temperature", TemperatureArray, self.on_temp)
+        self.sub_tactile = rospy.Subscriber("/gripper/sdh_controller/pressure", PressureArrayList, self.on_tactile)
+
+        # maximum measurable pressure
+        # 4096 * calib_pressure / calib_voltage
+        # 2^12 * 0.000473 / 592.1 = 0.0032720959297415976 (unit: N/(mm*mm) )
+        self.max_pressure_value = 2**12 * 0.000473 / 592.1
+
+        self.max_pressure_readings = 0
 
         # Connect to UI
         # service buttons
@@ -73,6 +86,8 @@ class SchunkPlugin(Plugin):
         self._widget.button_estop.clicked.connect(lambda: self.call_service("emergency_stop"))
         self._widget.button_motor_on.clicked.connect(lambda: self.call_service("motor_on"))
         self._widget.button_motor_off.clicked.connect(lambda: self.call_service("motor_off"))
+
+        self._widget.button_reset_max_pressure.clicked.connect(lambda : self.reset_max_pressure_readings())
 
         # status text
         self.status_message = self._widget.status_message
@@ -91,6 +106,8 @@ class SchunkPlugin(Plugin):
         # set spinner boxes by default sliders values
         self._widget.proximal_spinbox.setValue(self._widget.proximal_slider.value() / 1000.0)
         self._widget.distal_spinbox.setValue(self._widget.distal_slider.value() / 1000.0)
+
+        self.update_pressure_image.connect(self.set_pressure_img)
 
         # map temperature names to spinner boxes
         self.tempspinners = dict()
@@ -145,7 +162,7 @@ class SchunkPlugin(Plugin):
         elif name == "shutdown":
             self.is_initialised = not resp.success
             self.is_motor_on = not resp.success
-            
+
         if name == "motor_on":
             self.is_motor_on = resp.success
         elif name == "motor_off":
@@ -222,9 +239,46 @@ class SchunkPlugin(Plugin):
                 except KeyError:
                     rospy.logerr("temperature",name,"is not provided by SDH driver node")
 
+    @staticmethod
+    def jet(m):
+        # clip values to range [0,1]
+        m = np.clip(m, 0.0, 1.0)
+        r = np.clip(np.minimum(4*m-1.5, -4*m+4.5), 0.0, 1.0)
+        g = np.clip(np.minimum(4*m-0.5, -4*m+3.5), 0.0, 1.0)
+        b = np.clip(np.minimum(4*m+0.5, -4*m+2.5), 0.0, 1.0)
+        return (np.dstack((r,g,b))*255).astype(np.uint8)
+
+    def set_pressure_img(self, name, pressure):
+        # apply colour map to scaled values
+        im = SchunkPlugin.jet(pressure / self.max_pressure_value)
+
+        getattr(self._widget, "lbl_"+str(name)).setText(name+":")
+        getattr(self._widget, "max_"+str(name)).setText("{:.9f}".format(np.max(pressure)))
+
+        if np.max(pressure) > self.max_pressure_readings:
+            self.max_pressure_readings = np.max(pressure)
+            self._widget.max_pressure.setText(str(self.max_pressure_readings))
+
+        qimg = QImage(im.data, im.shape[1], im.shape[0], 3*im.shape[1], QImage.Format_RGB888)
+        T = QTransform()
+        T.rotate(-90)
+        qpix = QPixmap.fromImage(qimg).transformed(T)
+        qpix = qpix.scaledToWidth(qpix.width()*20)
+        getattr(self._widget, "tactile_"+str(name)).setPixmap(qpix)
+
+    def on_tactile(self, msg_tactile):
+        for m in msg_tactile.pressure_list:
+            p = np.array(m.pressure, dtype=np.float64).reshape((m.cells_y, m.cells_x))
+            self.update_pressure_image.emit(m.sensor_name, p)
+
+    def reset_max_pressure_readings(self):
+        self.max_pressure_readings = 0
+        self._widget.max_pressure.setText(str(self.max_pressure_readings))
+
     def shutdown_plugin(self):
         # TODO unregister all publishers here
         self.sub_temp.unregister()
+        self.sub_tactile.unregister()
 
         self.action_client.cancel_all_goals()
         self.running = False
