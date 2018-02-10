@@ -9,7 +9,7 @@ from qt_gui.plugin import Plugin
 from python_qt_binding import loadUi
 from python_qt_binding.QtWidgets import QWidget
 from python_qt_binding.QtGui import QImage, QPixmap, QTransform
-from python_qt_binding.QtCore import pyqtSignal
+from python_qt_binding.QtCore import pyqtSignal, QTimer
 
 # action library
 import actionlib
@@ -21,8 +21,6 @@ from trajectory_msgs.msg import JointTrajectoryPoint
 from schunk_sdh.msg import TemperatureArray, PressureArrayList
 
 import math
-import threading
-import time
 import numpy as np
 
 
@@ -119,10 +117,9 @@ class SchunkPlugin(Plugin):
         self.is_motor_on = False
         self.has_new_data = False
 
-        # start working thread
-        self.running = True
-        self.thread = threading.Thread(target=self.loop, args=())
-        self.thread.start()
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.loop)
+        self.timer.start(100)
 
     def on_slider_update(self, spinner, value):
         # just set spinner value, do not forward signal back to slider
@@ -174,12 +171,9 @@ class SchunkPlugin(Plugin):
         return resp.success
 
     def loop(self):
-        self.running = True
-        while self.running:
-            if self.is_initialised and self.is_motor_on and self.has_new_data:
-                self.send_grasp_joint_positions()
-                self.has_new_data = False
-            time.sleep(0.1)
+        if self.is_initialised and self.is_motor_on and self.has_new_data:
+            self.send_grasp_joint_positions()
+            self.has_new_data = False
 
     def send_grasp_joint_positions(self):
         # values in range 0 ... 1
@@ -279,10 +273,7 @@ class SchunkPlugin(Plugin):
         # TODO unregister all publishers here
         self.sub_temp.unregister()
         self.sub_tactile.unregister()
-
         self.action_client.cancel_all_goals()
-        self.running = False
-        self.thread.join()
 
     def save_settings(self, plugin_settings, instance_settings):
         # TODO save intrinsic configuration, usually using:
