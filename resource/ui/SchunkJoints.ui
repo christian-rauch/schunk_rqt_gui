@@ -154,7 +154,7 @@
       <item>
        <widget class="QTabWidget" name="tabWidget">
         <property name="currentIndex">
-         <number>1</number>
+         <number>0</number>
         </property>
         <widget class="QWidget" name="tab_grasp">
          <attribute name="title">
@@ -254,6 +254,13 @@
              </widget>
             </item>
            </layout>
+          </item>
+          <item>
+           <widget class="QPushButton" name="send_joints">
+            <property name="text">
+             <string>Send with motor on/off</string>
+            </property>
+           </widget>
           </item>
          </layout>
         </widget>

@@ -9,7 +9,7 @@ from qt_gui.plugin import Plugin
 from python_qt_binding import loadUi
 from python_qt_binding.QtWidgets import QWidget
 from python_qt_binding.QtGui import QImage, QPixmap, QTransform
-from python_qt_binding.QtCore import pyqtSignal, QTimer
+from python_qt_binding.QtCore import pyqtSignal
 
 # action library
 import actionlib
@@ -77,12 +77,14 @@ class SchunkPlugin(Plugin):
 
         self.max_pressure_readings = 0
 
+        self.is_motor_on = False
+
         # Connect to UI
         # service buttons
         self._widget.button_init.clicked.connect(lambda: self.call_service("init"))
         self._widget.button_disconnect.clicked.connect(lambda: self.call_service("shutdown"))
         self._widget.button_estop.clicked.connect(lambda: self.call_service("emergency_stop"))
-        self._widget.button_motor_on.clicked.connect(lambda: self.call_service("motor_on"))
+        self._widget.button_motor_on.clicked.connect(lambda: self.call_service("motor_on", True))
         self._widget.button_motor_off.clicked.connect(lambda: self.call_service("motor_off"))
 
         self._widget.button_reset_max_pressure.clicked.connect(lambda : self.reset_max_pressure_readings())
@@ -91,15 +93,14 @@ class SchunkPlugin(Plugin):
         self.status_message = self._widget.status_message
 
         # joint sliders
-        self._widget.proximal_slider.valueChanged.connect(
-            lambda value: self.on_slider_update(self._widget.proximal_spinbox, value))
-        self._widget.distal_slider.valueChanged.connect(
-            lambda value: self.on_slider_update(self._widget.distal_spinbox, value))
+        self._widget.proximal_slider.valueChanged.connect(lambda value: self.on_slider_update(self._widget.proximal_spinbox, value))
+        self._widget.distal_slider.valueChanged.connect(lambda value: self.on_slider_update(self._widget.distal_spinbox, value))
         # joint spinners
-        self._widget.proximal_spinbox.valueChanged.connect(
-            lambda value: self.on_spinner_update(self._widget.proximal_slider, value))
-        self._widget.distal_spinbox.valueChanged.connect(
-            lambda value: self.on_spinner_update(self._widget.distal_slider, value))
+        self._widget.proximal_spinbox.valueChanged.connect(lambda value: self.on_spinner_update(self._widget.proximal_slider, value))
+        self._widget.distal_spinbox.valueChanged.connect(lambda value: self.on_spinner_update(self._widget.distal_slider, value))
+
+        self._widget.proximal_spinbox.valueChanged.connect(self.send_grasp_joint_positions)
+        self._widget.distal_spinbox.valueChanged.connect(self.send_grasp_joint_positions)
 
         # set spinner boxes by default sliders values
         self._widget.proximal_spinbox.setValue(self._widget.proximal_slider.value() / 1000.0)
@@ -113,29 +114,19 @@ class SchunkPlugin(Plugin):
         self.tempspinners["controller"] = self._widget.spin_ctrl
         self.tempspinners["pcb"]        = self._widget.spin_pcb
 
-        self.is_initialised = False
-        self.is_motor_on = False
-        self.has_new_data = False
-
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.loop)
-        self.timer.start(100)
-
     def on_slider_update(self, spinner, value):
         # just set spinner value, do not forward signal back to slider
         spinner.blockSignals(True)
         spinner.setValue(value / 1000.0)
         spinner.blockSignals(False)
-        self.has_new_data = True
 
     def on_spinner_update(self, slider, value):
         # just set slider value, do not forward signal back to spinner
         slider.blockSignals(True)
         slider.setValue(value * 1000)
         slider.blockSignals(False)
-        self.has_new_data = True
 
-    def call_service(self, name):
+    def call_service(self, name, send_joints=False):
         service_name = '/gripper/sdh_controller/' + name
 
         try:
@@ -153,29 +144,31 @@ class SchunkPlugin(Plugin):
         print(resp)
         self.status_message.setText(resp.message)
 
+        # power off motors after initialisation
         if name == "init":
-            self.is_initialised = resp.success
-            self.is_motor_on = resp.success
-        elif name == "shutdown":
-            self.is_initialised = not resp.success
-            self.is_motor_on = not resp.success
+            res = rospy.ServiceProxy("/gripper/sdh_controller/motor_off", Trigger)()
+            self.is_motor_on = not res.success
 
         if name == "motor_on":
             self.is_motor_on = resp.success
         elif name == "motor_off":
             self.is_motor_on = not resp.success
 
-        if resp.success and (name in ["init", "motor_on"]):
-            self.has_new_data = True
+        if send_joints:
+            self.send_grasp_joint_positions()
 
         return resp.success
 
-    def loop(self):
-        if self.is_initialised and self.is_motor_on and self.has_new_data:
-            self.send_grasp_joint_positions()
-            self.has_new_data = False
+    def send_joints_onoff(self):
+        call_service("motor_on")
+        self.send_grasp_joint_positions()
+        call_service("motor_off")
 
     def send_grasp_joint_positions(self):
+
+        if not self.is_motor_on:
+            return
+
         # values in range 0 ... 1
         proximal_value = self._widget.proximal_spinbox.value()
         distal_value = self._widget.distal_spinbox.value()
@@ -225,13 +218,12 @@ class SchunkPlugin(Plugin):
             return False
 
     def on_temp(self, temp_msg):
-        if self.is_initialised:
-            temps = dict(zip(temp_msg.name, temp_msg.temperature))
-            for name, spinner in self.tempspinners.iteritems():
-                try:
-                    spinner.setValue(temps[name])
-                except KeyError:
-                    rospy.logerr("temperature",name,"is not provided by SDH driver node")
+        temps = dict(zip(temp_msg.name, temp_msg.temperature))
+        for name, spinner in self.tempspinners.iteritems():
+            try:
+                spinner.setValue(temps[name])
+            except KeyError:
+                rospy.logerr("temperature",name,"is not provided by SDH driver node")
 
     @staticmethod
     def jet(m):
