@@ -600,7 +600,7 @@
             <item>
              <widget class="QLabel" name="label_2">
               <property name="text">
-               <string>MPa</string>
+               <string>Pa</string>
               </property>
              </widget>
             </item>

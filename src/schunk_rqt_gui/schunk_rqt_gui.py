@@ -71,9 +71,9 @@ class SchunkPlugin(Plugin):
         self.sub_tactile = rospy.Subscriber("/gripper/sdh_controller/pressure", PressureArrayList, self.on_tactile)
 
         # maximum measurable pressure
-        # 4096 * calib_pressure / calib_voltage
-        # 2^12 * 0.000473 / 592.1 = 0.0032720959297415976 (unit: N/(mm*mm) )
-        self.max_pressure_value = 2**12 * 0.000473 / 592.1
+        # 4096 * calib_pressure / calib_voltage * 1e6
+        # 2^12 * 0.000473 / 592.1 * 1e6 = 3272.0959297415975 Pascal
+        self.max_pressure_value = 2**12 * 0.000473 / 592.1 * 1*6
 
         self.max_pressure_readings = 0
 
