@@ -1,5 +1,5 @@
 <library path="src">
-  <class name="Schunk SDH2 UI" type="schunk_ui.schunk_ui.SchunkPlugin" base_class_type="rqt_gui_py::Plugin">
+  <class name="Schunk SDH2 UI" type="schunk_rqt_gui.schunk_rqt_gui.SchunkPlugin" base_class_type="rqt_gui_py::Plugin">
     <description>
       Schunk SDH2 UI
     </description>
