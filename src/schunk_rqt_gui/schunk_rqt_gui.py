@@ -132,7 +132,13 @@ class SchunkPlugin(Plugin):
             return False
 
         service = rospy.ServiceProxy(service_name, Trigger)
-        resp = service()
+        try:
+            resp = service()
+        except rospy.service.ServiceException as e:
+            msg = "service call '" + str(name) + "' failed"
+            rospy.logerr(msg)
+            self.status_message.setText(msg)
+            return False
 
         print("Called service:", name)
         print("Response:")
